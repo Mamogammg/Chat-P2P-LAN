@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Chat P2P LAN</title>
+  <style>
+    body { font-family: sans-serif; max-width: 600px; margin: 40px auto; }
+    #peers { margin: 1em 0; }
+    .peer { padding: 0.5em; background: #eee; margin: 0.3em 0; cursor: pointer; border-radius: 5px; }
+    #chat { display: none; margin-top: 2em; }
+    #messages { height: 200px; overflow-y: auto; border: 1px solid #ccc; padding: 0.5em; }
+    #input { width: 100%; padding: 0.5em; }
+  </style>
+</head>
+<body>
+  <h2>Chat P2P LAN</h2>
+  <div>
+    <label>Nombre de usuario: </label>
+    <input id="username" type="text">
+    <button onclick="register()">Registrar!</button>
+  </div>
+  <p>Selecciona un dispositivo para chatear:</p>
+  <div id="peers"></div>
+
+  <div id="chat">
+    <h3>Chat</h3>
+    <button onclick="closeConnection()">Finalizar conexión</button>
+    <div id="messages"></div>
+    <input id="input" placeholder="Escribe un mensaje y presiona Enter..." />
+  </div>
+
+  <script src="https://cdn.socket.io/4.0.1/socket.io.min.js"></script>
+  <script>
+    const SERVER_URL = 'http://192.168.1.144:3000';
+    const socket = io(SERVER_URL);
+
+    //const localId = Math.random().toString(36).substring(2, 9);
+    //socket.emit('register', localId);
+
+    let peerConnection;
+    let dataChannel;
+    let remoteId;
+
+    let pendingCandidates = [];
+    let remoteDescriptionSet = false;
+
+    const peersDiv = document.getElementById('peers');
+    const chatDiv = document.getElementById('chat');
+    const messagesDiv = document.getElementById('messages');
+    const input = document.getElementById('input');
+
+    let localId;
+
+    function register() {
+      localId = document.getElementById("username").value;
+      socket.emit('register', localId);
+    }
+
+    // Mostrar peers disponibles
+    socket.on('peers', peers => {
+      peersDiv.innerHTML = '';
+      peers.forEach(id => {
+        if (id === localId) return;
+        const el = document.createElement('div');
+        el.className = 'peer';
+        el.textContent = id;
+        el.onclick = () => connectToPeer(id);
+        peersDiv.appendChild(el);
+      });
+    });
+
+    // Conectar a otro peer
+    function connectToPeer(id) {
+      remoteId = id;
+      peerConnection = new RTCPeerConnection();
+      console.log("conectando al par " + id)
+
+      dataChannel = peerConnection.createDataChannel('chat');
+      setupDataChannel(remoteId);
+
+      peerConnection.onicecandidate = e => {
+        if (e.candidate) {
+          socket.emit('signal', { to: remoteId, signal: e.candidate });
+        }
+      };
+
+      peerConnection.createOffer()
+        .then(offer => peerConnection.setLocalDescription(offer))
+        .then(() => {
+          console.log("creando oferta para el par " + id)
+          socket.emit('signal', { to: remoteId, signal: peerConnection.localDescription });
+        });
+    }
+
+    function setupDataChannel(id) {
+      dataChannel.onopen = () => {
+        chatDiv.style.display = 'block';
+        logMessage('Canal abierto con: ' + id);
+        logMessage('')
+      };
+      dataChannel.onmessage = e => {
+        logMessage(`${id}: ${e.data}`);
+      };
+      dataChannel.onclose = () => {
+        chatDiv.style.display = 'none';
+        messagesDiv.innerHTML = '';
+      };
+    }
+
+    function closeConnection() {
+      dataChannel.close()
+    }
+
+    socket.on('signal', async ({ from, signal }) => {
+      if (!peerConnection) {
+        remoteId = from;
+        peerConnection = new RTCPeerConnection();
+        console.log("recibida la señal sin conexión del par " + remoteId)
+
+        peerConnection.ondatachannel = e => {
+          dataChannel = e.channel;
+          setupDataChannel(remoteId);
+        };
+
+        peerConnection.onicecandidate = e => {
+          if (e.candidate) {
+            socket.emit('signal', { to: remoteId, signal: e.candidate });
+          }
+        };
+      }
+
+      if (signal.type === 'offer') {
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(signal));
+        remoteDescriptionSet = true;
+        for (const c of pendingCandidates) {
+          await peerConnection.addIceCandidate(new RTCIceCandidate(c));
+        }
+        pendingCandidates = [];
+
+        const answer = await peerConnection.createAnswer();
+        await peerConnection.setLocalDescription(answer);
+        socket.emit('signal', { to: from, signal: peerConnection.localDescription });
+
+      } else if (signal.type === 'answer') {
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(signal));
+        remoteDescriptionSet = true;
+        for (const c of pendingCandidates) {
+          await peerConnection.addIceCandidate(new RTCIceCandidate(c));
+        }
+        pendingCandidates = [];
+
+      } else if (signal.candidate) {
+        if (remoteDescriptionSet) {
+          await peerConnection.addIceCandidate(new RTCIceCandidate(signal));
+        } else {
+          pendingCandidates.push(signal);
+        }
+      }
+    });
+
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && input.value.trim()) {
+        const msg = input.value;
+        dataChannel.send(msg);
+        logMessage(`Tú: ${msg}`);
+        input.value = '';
+      }
+    });
+
+    function logMessage(msg) {
+      const el = document.createElement('div');
+      el.textContent = msg;
+      messagesDiv.appendChild(el);
+      messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    }
+  </script>
+</body>
+</html>

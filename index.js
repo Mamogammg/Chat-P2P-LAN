@@ -1,20 +1,23 @@
 const express = require('express');
 const http = require('http');
-const socketIo = require('socket.io');
 const cors = require('cors');
+const { Server } = require('socket.io');
 
 const app = express();
 const server = http.createServer(app);
-
-// 🔓 Permitir CORS desde cualquier origen
-app.use(cors());
-
-// Crear servidor de WebSocket con CORS habilitado
-const io = socketIo(server, {
+const io = new Server(server, {
+  path: '/data', // Socket.IO servirá desde /data
   cors: {
     origin: '*',
     methods: ['GET', 'POST']
   }
+});
+
+// Servir index.html desde /public al visitar /
+app.use(express.static(path.join(__dirname, 'public')));
+
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public/index.html'));
 });
 
 let peers = {};
@@ -51,7 +54,7 @@ io.on('connection', (socket) => {
 });
 
 // Servir archivos estáticos opcionalmente
-app.use(express.static('public'));
+//app.use(express.static('public'));
 
 // Iniciar el servidor
 const port = process.env.PORT || 3000;

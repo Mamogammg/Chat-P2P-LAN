@@ -31,8 +31,9 @@
 
   <script src="https://cdn.socket.io/4.0.1/socket.io.min.js"></script>
   <script>
-    const SERVER_URL = 'http://192.168.1.144:3000';
-    const socket = io(SERVER_URL);
+    //const SERVER_URL = 'http://192.168.1.144:3000';
+    //const socket = io(SERVER_URL);
+    const socket = io('/', { path: '/data' }); // conecta a /data en el mismo dominio
 
     //const localId = Math.random().toString(36).substring(2, 9);
     //socket.emit('register', localId);
